@@ -1,0 +1,25 @@
+{
+  "name": "github-review-comment-reply-mcp",
+  "version": "1.0.0",
+  "description": "MCP server specialized for replying to GitHub review comments (complements official GitHub MCP)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": ["mcp", "github", "review", "comment"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "@octokit/rest": "^20.0.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+} 
