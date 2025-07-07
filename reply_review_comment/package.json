@@ -1,7 +1,7 @@
 {
-  "name": "github-review-comment-reply-mcp",
-  "version": "1.0.0",
-  "description": "MCP server specialized for replying to GitHub review comments (complements official GitHub MCP)",
+  "name": "github-review-comment-reply-resolve-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for replying to and resolving GitHub review comments (complements official GitHub MCP)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

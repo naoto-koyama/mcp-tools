@@ -10,12 +10,17 @@
 
 ### 🔧 GitHub Review Comment Reply (`reply_review_comment`)
 
-**何ができるか**: PRのレビューコメントに返信を投稿
+**何ができるか**: 
+- PRのレビューコメントに返信を投稿
+- レビューコメントスレッドを解決済みにする（Resolve conversation）
+- 解決済みのスレッドを未解決に戻す（Unresolve conversation）
 
 **使用場面**:
 - CodeRabbitなどの自動レビューツールからの指摘に対応完了の返信をする時
 - レビュアーからの質問に回答する時
 - 修正対応の報告をする時
+- レビューコメントの議論が完了した時にスレッドを解決済みにする時
+- 再議論が必要になった時にスレッドを未解決に戻す時
 
 ### 🎨 Gemini Image Generator (`mcp-server-gemini-image-generator`)
 
