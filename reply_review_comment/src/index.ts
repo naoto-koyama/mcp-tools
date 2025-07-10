@@ -25,7 +25,7 @@ const octokit = new Octokit({
 const server = new Server(
   {
     name: 'github-review-comment-reply-resolve-mcp',
-    version: '1.2.0',
+    version: '1.2.1',
   },
   {
     capabilities: {
@@ -241,51 +241,85 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         // First, get all review comments using REST API
-        const response = await octokit.rest.pulls.listReviewComments({
-          owner,
-          repo,
-          pull_number,
-          per_page,
-          page,
-        });
+        // We need to get all comments to filter properly before pagination
+        let allComments: any[] = [];
+        let currentPage = 1;
+        let hasMorePages = true;
+        
+        // Fetch all comments
+        while (hasMorePages) {
+          const pageResponse = await octokit.rest.pulls.listReviewComments({
+            owner,
+            repo,
+            pull_number,
+            per_page: 100,  // Max per page
+            page: currentPage,
+          });
+          
+          allComments = allComments.concat(pageResponse.data);
+          
+          // Check if there are more pages
+          hasMorePages = pageResponse.headers.link?.includes('rel="next"') || false;
+          currentPage++;
+          
+          // Safety limit to prevent infinite loops
+          if (currentPage > 20) break;  // Max 2000 comments
+        }
 
-        const comments = response.data;
+        // Get all review threads with pagination
+        let allThreads: any[] = [];
+        let hasNextPage = true;
+        let cursor: string | null = null;
 
-        // Then, get all review threads with their resolution status using GraphQL
-        const query = `
-          query($owner: String!, $repo: String!, $prNumber: Int!) {
-            repository(owner: $owner, name: $repo) {
-              pullRequest(number: $prNumber) {
-                reviewThreads(first: 100) {
-                  nodes {
-                    id
-                    isResolved
-                    resolvedBy {
-                      login
+        while (hasNextPage) {
+          const query = `
+            query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $prNumber) {
+                  reviewThreads(first: 100, after: $cursor) {
+                    pageInfo {
+                      hasNextPage
+                      endCursor
                     }
-                    comments(first: 100) {
-                      nodes {
-                        databaseId
+                    nodes {
+                      id
+                      isResolved
+                      resolvedBy {
+                        login
+                      }
+                      comments(first: 100) {
+                        nodes {
+                          databaseId
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          }
-        `;
+          `;
 
-        const threadsResponse: any = await octokit.graphql(query, {
-          owner,
-          repo,
-          prNumber: pull_number,
-        });
+          const threadsResponse: any = await octokit.graphql(query, {
+            owner,
+            repo,
+            prNumber: pull_number,
+            cursor,
+          });
+
+          const pullRequest = threadsResponse.repository?.pullRequest;
+          if (!pullRequest) break;
+
+          const reviewThreads = pullRequest.reviewThreads;
+          allThreads = allThreads.concat(reviewThreads.nodes || []);
+          
+          hasNextPage = reviewThreads.pageInfo.hasNextPage;
+          cursor = reviewThreads.pageInfo.endCursor;
+        }
 
         // Create a map of comment ID to thread info
         const commentThreadMap = new Map<number, { isResolved: boolean; resolvedBy: string | null }>();
-        const threads = threadsResponse.repository?.pullRequest?.reviewThreads?.nodes || [];
         
-        for (const thread of threads) {
+        for (const thread of allThreads) {
           const threadInfo = {
             isResolved: thread.isResolved,
             resolvedBy: thread.resolvedBy?.login || null,
@@ -299,7 +333,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // Combine comment data with thread resolution status
-        const commentsWithStatus = comments.map(comment => {
+        const commentsWithStatus = allComments.map(comment => {
           const threadInfo = commentThreadMap.get(comment.id) || { isResolved: false, resolvedBy: null };
           
           return {
@@ -326,21 +360,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           filteredComments = commentsWithStatus.filter(comment => !comment.is_resolved);
         }
 
+        // Apply pagination to filtered results
+        const startIndex = (page - 1) * per_page;
+        const endIndex = startIndex + per_page;
+        const paginatedComments = filteredComments.slice(startIndex, endIndex);
+
+        // Calculate pagination info
+        const totalFilteredCount = filteredComments.length;
+        const totalPages = Math.ceil(totalFilteredCount / per_page);
+
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({
                 success: true,
-                comments: filteredComments,
+                comments: paginatedComments,
                 filter_applied: resolved_status,
-                total_before_filter: commentsWithStatus.length,
+                total_before_filter: allComments.length,
+                total_after_filter: totalFilteredCount,
                 pagination: {
                   page,
                   per_page,
-                  total: response.headers['x-total-count'] ? parseInt(String(response.headers['x-total-count'])) : comments.length,
-                  has_next_page: response.headers.link?.includes('rel="next"') || false,
-                  has_previous_page: response.headers.link?.includes('rel="prev"') || false,
+                  total: totalFilteredCount,
+                  total_pages: totalPages,
+                  has_next_page: page < totalPages,
+                  has_previous_page: page > 1,
                 },
               }, null, 2),
             },
