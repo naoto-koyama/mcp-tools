@@ -1,6 +1,6 @@
 # GitHub Review Comment Reply & Resolve MCP Server
 
-GitHub MCPの不足機能を補完するためのカスタムMCPサーバーです。GitHub Public MCPではレビューコメントに対してのコメント（返信）やスレッドの解決ができないため、これらの機能を提供します。
+GitHub MCPの不足機能を補完するためのカスタムMCPサーバーです。GitHub Public MCPではレビューコメントに対してのコメント（返信）やスレッドの解決ができない、またレビューコメントの解決状態が取得できないため、これらの機能を提供します。
 
 ## 動作確認済み環境
 
@@ -11,11 +11,12 @@ GitHub MCPの不足機能を補完するためのカスタムMCPサーバーで�
 
 ## 機能
 
+- `get_pull_request_comments_with_resolve_status`: レビューコメントを解決状態付きで取得
 - `reply_to_review_comment`: プルリクエストのレビューコメントに対して返信を作成
 - `resolve_review_thread`: レビューコメントスレッドを解決済みにする
 - `unresolve_review_thread`: 解決済みのレビューコメントスレッドを未解決に戻す
 
-**注意**: レビューコメントの一覧取得や詳細取得は、公式のGitHub MCPを使用してください。このMCPは返信と解決機能のみを提供します。
+**注意**: 基本的なレビューコメントの取得は公式のGitHub MCPでも可能ですが、解決状態が含まれていない場合はこのMCPの`get_pull_request_comments_with_resolve_status`を使用してください。
 
 ## セットアップ
 
@@ -72,10 +73,33 @@ Cursorの設定ファイル（`~/.cursor/mcp.json`）を編集します：
 
 ### 基本的な使用方法
 
-1. まず、公式のGitHub MCPを使用してレビューコメントを取得：
+1. レビューコメントを解決状態付きで取得：
 
 ```
-Github MCPを利用してXXのPRのレビューコメントを取得してください
+このMCPサーバーを使って、owner/repoのPR #123のレビューコメントを解決状態も含めて取得してください
+```
+
+返答例：
+```json
+{
+  "success": true,
+  "comments": [
+    {
+      "id": 123456789,
+      "body": "This looks good!",
+      "user": "reviewer",
+      "created_at": "2024-01-01T00:00:00Z",
+      "is_resolved": true,
+      "resolved_by": "author",
+      // ... その他のフィールド
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "per_page": 30,
+    "total": 5
+  }
+}
 ```
 
 2. 取得したコメントのIDを使用して返信：

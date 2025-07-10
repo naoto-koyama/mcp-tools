@@ -25,7 +25,7 @@ const octokit = new Octokit({
 const server = new Server(
   {
     name: 'github-review-comment-reply-resolve-mcp',
-    version: '1.1.0',
+    version: '1.2.0',
   },
   {
     capabilities: {
@@ -97,6 +97,44 @@ async function getThreadIdFromComment(owner: string, repo: string, commentId: nu
 }
 
 const tools: Tool[] = [
+  {
+    name: 'get_pr_comments',
+    description: 'Get pull request review comments with their thread resolution status',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: {
+          type: 'string',
+          description: 'Repository owner (username or organization)',
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name',
+        },
+        pull_number: {
+          type: 'number',
+          description: 'Pull request number',
+        },
+        per_page: {
+          type: 'number',
+          description: 'Number of results per page (max 100)',
+          default: 30,
+        },
+        page: {
+          type: 'number',
+          description: 'Page number of the results',
+          default: 1,
+        },
+        resolved_status: {
+          type: 'string',
+          enum: ['all', 'resolved', 'unresolved'],
+          description: 'Filter comments by resolution status (default: all)',
+          default: 'all',
+        },
+      },
+      required: ['owner', 'repo', 'pull_number'],
+    },
+  },
   {
     name: 'reply_to_review_comment',
     description: 'Reply to a specific review comment on a GitHub pull request',
@@ -192,6 +230,124 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
+      case 'get_pr_comments': {
+        const { owner, repo, pull_number, per_page = 30, page = 1, resolved_status = 'all' } = args as {
+          owner: string;
+          repo: string;
+          pull_number: number;
+          per_page?: number;
+          page?: number;
+          resolved_status?: string;
+        };
+
+        // First, get all review comments using REST API
+        const response = await octokit.rest.pulls.listReviewComments({
+          owner,
+          repo,
+          pull_number,
+          per_page,
+          page,
+        });
+
+        const comments = response.data;
+
+        // Then, get all review threads with their resolution status using GraphQL
+        const query = `
+          query($owner: String!, $repo: String!, $prNumber: Int!) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $prNumber) {
+                reviewThreads(first: 100) {
+                  nodes {
+                    id
+                    isResolved
+                    resolvedBy {
+                      login
+                    }
+                    comments(first: 100) {
+                      nodes {
+                        databaseId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const threadsResponse: any = await octokit.graphql(query, {
+          owner,
+          repo,
+          prNumber: pull_number,
+        });
+
+        // Create a map of comment ID to thread info
+        const commentThreadMap = new Map<number, { isResolved: boolean; resolvedBy: string | null }>();
+        const threads = threadsResponse.repository?.pullRequest?.reviewThreads?.nodes || [];
+        
+        for (const thread of threads) {
+          const threadInfo = {
+            isResolved: thread.isResolved,
+            resolvedBy: thread.resolvedBy?.login || null,
+          };
+          
+          // Map all comments in this thread to the thread info
+          const commentIds = thread.comments?.nodes?.map((c: any) => c.databaseId) || [];
+          for (const commentId of commentIds) {
+            commentThreadMap.set(commentId, threadInfo);
+          }
+        }
+
+        // Combine comment data with thread resolution status
+        const commentsWithStatus = comments.map(comment => {
+          const threadInfo = commentThreadMap.get(comment.id) || { isResolved: false, resolvedBy: null };
+          
+          return {
+            id: comment.id,
+            body: comment.body,
+            user: comment.user?.login,
+            created_at: comment.created_at,
+            updated_at: comment.updated_at,
+            html_url: comment.html_url,
+            pull_request_review_id: comment.pull_request_review_id,
+            path: comment.path,
+            line: comment.line,
+            in_reply_to_id: comment.in_reply_to_id,
+            is_resolved: threadInfo.isResolved,
+            resolved_by: threadInfo.resolvedBy,
+          };
+        });
+
+        // Filter comments based on resolved_status
+        let filteredComments = commentsWithStatus;
+        if (resolved_status === 'resolved') {
+          filteredComments = commentsWithStatus.filter(comment => comment.is_resolved);
+        } else if (resolved_status === 'unresolved') {
+          filteredComments = commentsWithStatus.filter(comment => !comment.is_resolved);
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                comments: filteredComments,
+                filter_applied: resolved_status,
+                total_before_filter: commentsWithStatus.length,
+                pagination: {
+                  page,
+                  per_page,
+                  total: response.headers['x-total-count'] ? parseInt(String(response.headers['x-total-count'])) : comments.length,
+                  has_next_page: response.headers.link?.includes('rel="next"') || false,
+                  has_previous_page: response.headers.link?.includes('rel="prev"') || false,
+                },
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
       case 'reply_to_review_comment': {
         const { owner, repo, pull_number, comment_id, body } = args as {
           owner: string;
